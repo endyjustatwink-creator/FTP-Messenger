@@ -6,7 +6,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Install dependencies
       run: |
@@ -14,12 +14,12 @@ jobs:
         sudo apt install -y zlib1g-dev openjdk-17-jdk
         pip install buildozer
         
-    - name: Check files
-      run: |
-        ls -la
-        echo "Files in repository:"
-        find . -type f -name "*.py" -o -name "*.spec"
-        
     - name: Build APK
       run: |
-        buildozer -v android debug
+        buildozer android debug
+        
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: FTP-Messenger-APK
+        path: bin/*.apk
