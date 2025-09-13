@@ -39,12 +39,23 @@ jobs:
       run: |
         export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
         export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
-        if buildozer -v android debug; then
+        
+        # Включаем максимальное логирование
+        buildozer -v android debug 2>&1 | tee full_build.log
+        
+        # Проверяем результат
+        if [ $? -eq 0 ]; then
           echo "Build successful!"
           ls -la bin/
         else
-          echo "Build failed! Showing full log:"
-          cat .buildozer/android/log/build.log
+          echo "Build failed! Full log:"
+          cat full_build.log
+          
+          # Ищем логи в других местах
+          echo "=== Searching for logs ==="
+          find . -name "*.log" -type f
+          find .buildozer -name "*.log" -type f 2>/dev/null || echo "No .buildozer logs found"
+          
           exit 1
         fi
         
