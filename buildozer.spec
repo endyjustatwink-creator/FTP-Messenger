@@ -1,12 +1,11 @@
 [app]
 title = FTP Messenger
-package.name = ftpmessenger  
+package.name = ftpmessenger
 package.domain = org.ftpmessenger
 version = 0.1
 requirements = python3, kivy
 source.dir = .
 source.include_exts = py
-
 source.include_patterns = *.py, *.png, *.jpg, *.kv, *.atlas
 
 [buildozer]
