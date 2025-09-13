@@ -59,16 +59,37 @@ jobs:
           exit 1
         fi
         
+    - name: Check build logs
+      run: |
+        echo "=== Buildozer log ==="
+        find . -name "*.log" -exec cat {} \; 2>/dev/null || echo "No log files found"
+        echo "=== Buildozer directory structure ==="
+        find .buildozer -type f 2>/dev/null || echo ".buildozer directory not found"
+        
     - name: Find and prepare APK for upload
       run: |
         echo "=== Listing build files ==="
-        ls -la bin/
-        APK_FILE=$(find bin/ -name "*.apk" -type f | head -1)
-        echo "Found APK: $APK_FILE"
-        cp "$APK_FILE" app-debug.apk
-        ls -la app-debug.apk
+        ls -la 
+        ls -la bin/ 2>/dev/null || echo "bin/ directory does not exist - build failed"
+        
+        # Проверяем существует ли APK
+        if [ -d "bin/" ]; then
+          APK_FILE=$(find bin/ -name "*.apk" -type f | head -1)
+          if [ -n "$APK_FILE" ]; then
+            echo "Found APK: $APK_FILE"
+            cp "$APK_FILE" app-debug.apk
+            ls -la app-debug.apk
+          else
+            echo "No APK files found in bin/ - build failed"
+            exit 1
+          fi
+        else
+          echo "Build directory does not exist - build failed"
+          exit 1
+        fi
         
     - name: Upload APK
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: FTP-Messenger-APK
