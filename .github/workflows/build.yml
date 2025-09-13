@@ -9,7 +9,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt update
-        sudo apt install -y zlib1g-dev openjdk-17-jdk
+        sudo apt install -y zlib1g-dev openjdk-17-jdk unzip
         pip install buildozer cython
         
     - name: Setup Android SDK
@@ -23,9 +23,12 @@ jobs:
         wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
         unzip commandlinetools-linux-9477386_latest.zip -d ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/
         
+        # Даем права на выполнение
+        chmod +x ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/cmdline-tools/bin/sdkmanager
+        
         # Настраиваем переменные
         export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
-        export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+        export PATH=$ANDROID_HOME/cmdline-tools/latest/cmdline-tools/bin:$PATH
         
         # Принимаем лицензии
         yes | sdkmanager --licenses
@@ -34,7 +37,7 @@ jobs:
     - name: Build APK
       run: |
         export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
-        export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+        export PATH=$ANDROID_HOME/cmdline-tools/latest/cmdline-tools/bin:$PATH
         buildozer android debug
         
     - name: Upload APK
