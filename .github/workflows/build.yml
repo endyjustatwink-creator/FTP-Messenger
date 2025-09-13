@@ -14,7 +14,6 @@ jobs:
         
     - name: Setup Android SDK
       run: |
-        # Создаем папки
         mkdir -p ~/.buildozer/android/platform/android-sdk/cmdline-tools
         mkdir -p ~/.android
         touch ~/.android/repositories.cfg
