@@ -47,6 +47,12 @@ jobs:
         export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
         buildozer -v android debug
         
+    - name: Check built APK
+      run: |
+        echo "=== Checking built files ==="
+        ls -la bin/
+        find . -name "*.apk" -type f
+        
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
