@@ -27,7 +27,6 @@ jobs:
         mv temp_folder/cmdline-tools ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/
         rm -rf temp_folder
         
-        # Даем права на выполнение
         chmod +x ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin/sdkmanager
         
         # Настраиваем переменные
