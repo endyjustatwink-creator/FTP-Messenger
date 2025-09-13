@@ -14,30 +14,24 @@ jobs:
         
     - name: Setup Android SDK
       run: |
-        # Создаем папки
         mkdir -p ~/.buildozer/android/platform/android-sdk/cmdline-tools
         mkdir -p ~/.android
         touch ~/.android/repositories.cfg
         
-        # Скачиваем Android Command Line Tools
         wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
         unzip commandlinetools-linux-9477386_latest.zip -d temp_folder
         mv temp_folder/cmdline-tools ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/
         rm -rf temp_folder
         
-        # СОЗДАЕМ СИМЛИНКИ ДЛЯ ОБМАНА BUILDОZER
         mkdir -p ~/.buildozer/android/platform/android-sdk/tools/bin
         ln -s ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin/sdkmanager ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager
         ln -s ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin ~/.buildozer/android/platform/android-sdk/tools/bin
         
-        # Даем права на выполнение
         chmod +x ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin/sdkmanager
         
-        # Настраиваем переменные
         export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
         export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
         
-        # Принимаем лицензии (ИСПРАВЛЕННЫЕ ВЕРСИИ)
         yes | sdkmanager --sdk_root=$ANDROID_HOME --licenses
         sdkmanager --sdk_root=$ANDROID_HOME "build-tools;34.0.0" "platforms;android-33"
         
@@ -45,7 +39,14 @@ jobs:
       run: |
         export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
         export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
-        buildozer -v android debug
+        if buildozer -v android debug; then
+          echo "Build successful!"
+          ls -la bin/
+        else
+          echo "Build failed! Showing full log:"
+          cat .buildozer/android/log/build.log
+          exit 1
+        fi
         
     - name: Find and prepare APK for upload
       run: |
