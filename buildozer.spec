@@ -1,54 +1,13 @@
-name: Build Android APK
-on: [push, pull_request]
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y zlib1g-dev openjdk-17-jdk unzip
-        pip install buildozer cython
-        
-    - name: Setup Android SDK
-      run: |
-        # Создаем папки
-        mkdir -p ~/.buildozer/android/platform/android-sdk/cmdline-tools
-        mkdir -p ~/.android
-        touch ~/.android/repositories.cfg
-        
-        # Скачиваем Android Command Line Tools
-        wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
-        unzip commandlinetools-linux-9477386_latest.zip -d temp_folder
-        mv temp_folder/cmdline-tools ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/
-        rm -rf temp_folder
-        
-        # СОЗДАЕМ СИМЛИНКИ ДЛЯ ОБМАНА BUILDОZER
-        mkdir -p ~/.buildozer/android/platform/android-sdk/tools/bin
-        ln -s ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin/sdkmanager ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager
-        ln -s ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin ~/.buildozer/android/platform/android-sdk/tools/bin
-        
-        # Даем права на выполнение
-        chmod +x ~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin/sdkmanager
-        
-        # Настраиваем переменные
-        export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
-        export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
-        
-        # Принимаем лицензии
-        yes | sdkmanager --sdk_root=$ANDROID_HOME --licenses
-        sdkmanager --sdk_root=$ANDROID_HOME "build-tools;34.0.0" "platforms;android-34"
-        
-    - name: Build APK
-      run: |
-        export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
-        export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
-        buildozer android debug
-        
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: FTP-Messenger-APK
-        path: bin/*.apk
+[app]
+title = FTP Messenger
+package.name = ftpmessenger  
+package.domain = org.ftpmessenger
+version = 0.1
+requirements = python3, kivy
+source.dir = .
+source.include_exts = py
+
+source.include_patterns = *.py, *.png, *.jpg, *.kv, *.atlas
+
+[buildozer]
+log_level = 2
