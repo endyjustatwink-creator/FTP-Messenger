@@ -10,7 +10,7 @@ jobs:
       run: |
         sudo apt update
         sudo apt install -y zlib1g-dev openjdk-17-jdk
-        pip install buildozer cython  ← ДОБАВЬ CYTHON ЗДЕСЬ!
+        pip install buildozer cython
         
     - name: Build APK
       run: |
