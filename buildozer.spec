@@ -7,6 +7,7 @@ requirements = python3, kivy
 source.dir = .
 source.include_exts = py
 source.include_patterns = *.py, *.png, *.jpg, *.kv, *.atlas
+android.ndk = 23b
 
 [buildozer]
 log_level = 2
