@@ -2,9 +2,9 @@
 title = FTP Messenger
 package.name = ftpmessenger
 package.domain = org.ftpmessenger
-version = 0.1
+version = 1.0
 source.dir = .
-source.include_exts = py,png,jpg,kv,atlas
+source.include_exts = py,png,jpg,kv,atlas,ttf
 orientation = portrait
 requirements = python3,kivy==2.3.0,openssl,requests,plyer
 android.permissions = INTERNET,ACCESS_NETWORK_STATE,ACCESS_WIFI_STATE
