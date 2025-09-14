@@ -6,8 +6,8 @@ version = 0.1
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 orientation = portrait
-requirements = python3,kivy,openssl,requests
-android.permissions = INTERNET,ACCESS_NETWORK_STATE
+requirements = python3,kivy==2.3.0,openssl,requests,plyer
+android.permissions = INTERNET,ACCESS_NETWORK_STATE,ACCESS_WIFI_STATE
 android.api = 31
 android.minapi = 21
 android.ndk = 23b
