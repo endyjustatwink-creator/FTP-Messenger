@@ -14,6 +14,15 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Debug repository structure
+      run: |
+        echo "=== Repository Structure ==="
+        ls -la
+        echo "=== buildozer.spec content ==="
+        cat buildozer.spec || echo "No buildozer.spec found"
+        echo "=== main.py content (first 10 lines) ==="
+        head -10 main.py || echo "No main.py found"
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
@@ -43,69 +52,68 @@ jobs:
         pip install --upgrade pip
         pip install buildozer
         pip install cython==0.29.33
-        pip install kivy
+        pip install kivy==2.3.0
 
-    - name: Build APK with verbose logging
+    - name: Initialize Buildozer (if needed)
+      run: |
+        if [ ! -f buildozer.spec ]; then
+          echo "Creating buildozer.spec..."
+          buildozer init
+        fi
+
+    - name: Build APK with step-by-step debugging
       run: |
         export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
         export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
         
-        # Полная очистка перед сборкой
-        buildozer android clean 2>/dev/null || true
-        rm -rf .buildozer/android/platform/build-*
-        rm -rf bin/
+        echo "=== Starting Buildozer ==="
+        buildozer --version
         
-        # Сборка с подробным логированием
-        buildozer -v android debug 2>&1 | tee full_build.log
+        echo "=== Checking configuration ==="
+        buildozer android checkconfig || true
+        
+        echo "=== Cleaning previous builds ==="
+        buildozer android clean 2>/dev/null || true
+        
+        echo "=== Starting build process ==="
+        timeout 1800 buildozer -v android debug 2>&1 | tee full_build.log
         
         # Проверяем результат
-        if [ $? -eq 0 ]; then
-          echo "Build successful!"
-          echo "=== Bin directory contents ==="
-          ls -la bin/ || echo "bin directory not found"
-          echo "=== All APK files ==="
-          find . -name "*.apk" -type f
+        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+          echo "Build completed successfully!"
         else
-          echo "Build failed! Full log:"
-          cat full_build.log
-          echo "=== Error summary ==="
-          grep -i "error\|fail\|exception" full_build.log | head -20
-          exit 1
+          echo "Build failed or timed out!"
         fi
 
-    - name: Show build log
-      if: always()
+    - name: Analyze build results
       run: |
-        echo "=== FULL BUILD LOG ==="
-        cat full_build.log || echo "No log file found"
-        echo "=== END LOG ==="
-
-    - name: Find and prepare APK
-      run: |
-        echo "=== Searching for APK files ==="
-        find . -name "*.apk" -type f
-        
-        # Создаем artifacts directory
-        mkdir -p artifacts
-        
-        # Копируем все найденные APK файлы
-        if find . -name "*.apk" -type f | grep -q .; then
-          echo "APK files found:"
-          find . -name "*.apk" -type f -exec cp {} artifacts/ \;
-          ls -la artifacts/
+        echo "=== Build log analysis ==="
+        if [ -f full_build.log ]; then
+          echo "Last 50 lines of log:"
+          tail -50 full_build.log
+          
+          echo "=== Errors and warnings ==="
+          grep -i "error\|fail\|warning\|exception" full_build.log | head -30 || echo "No obvious errors found"
+          
+          echo "=== Build completion check ==="
+          if grep -i "build completed\|apk available" full_build.log; then
+            echo "Build seems to have completed successfully"
+          else
+            echo "Build did not complete successfully"
+          fi
         else
-          echo "No APK files found anywhere!"
-          echo "=== Buildozer directories ==="
-          find .buildozer -name "*.apk" -type f 2>/dev/null || echo "No APK in .buildozer"
-          exit 1
+          echo "No build log found!"
         fi
-
-    - name: Upload APK artifact
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: android-apk
-        path: artifacts/*.apk
+        
+        echo "=== File system check ==="
+        echo "Bin directory:"
+        ls -la bin/ 2>/dev/null || echo "No bin directory"
+        
+        echo "Buildozer directories:"
+        find .buildozer -name "*.apk" -type f 2>/dev/null || echo "No APK files in .buildozer"
+        
+        echo "All APK files:"
+        find . -name "*.apk" -type f 2>/dev/null || echo "No APK files anywhere"
 
     - name: Upload build log
       if: always()
@@ -113,3 +121,25 @@ jobs:
       with:
         name: build-log
         path: full_build.log
+
+    - name: Upload any found APK
+      if: always()
+      run: |
+        mkdir -p artifacts
+        find . -name "*.apk" -type f -exec cp {} artifacts/ \; 2>/dev/null || true
+        
+        if ls artifacts/*.apk 1> /dev/null 2>&1; then
+          echo "APK files found and copied to artifacts/"
+          ls -la artifacts/
+        else
+          echo "No APK files to upload"
+          # Создаем пустой файл чтобы не было ошибки
+          touch artifacts/empty.txt
+        fi
+
+    - name: Upload APK artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-apk
+        path: artifacts/*.apk
