@@ -58,9 +58,9 @@ jobs:
         pip install buildozer
         pip install kivy==2.3.0
 
-    - name: Install Android SDK and Build Tools manually
+    - name: Setup Android SDK correctly
       run: |
-        # Создаем директории для Android SDK
+        # Создаем директории
         mkdir -p ~/.android
         mkdir -p ~/.buildozer/android/platform
         
@@ -69,66 +69,52 @@ jobs:
         echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> ~/.android/android-sdk-license
         echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> ~/.android/android-sdk-license
         
-        # Скачиваем и устанавливаем Android Command Line Tools
+        # Скачиваем Command Line Tools в правильную директорию
         cd ~/.buildozer/android/platform
         wget -q https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip
         unzip -q commandlinetools-linux-8512546_latest.zip
         rm commandlinetools-linux-8512546_latest.zip
         
-        # Устанавливаем SDK Manager
-        cd ~/.buildozer/android/platform
+        # Создаем правильную структуру директорий для Android SDK
         mkdir -p android-sdk/cmdline-tools
         mv cmdline-tools android-sdk/cmdline-tools/latest
         
-        # Устанавливаем необходимые компоненты
-        yes | android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=android-sdk "platform-tools" "build-tools;34.0.0" "platforms;android-33" "ndk;23.1.7779620"
+        # Устанавливаем platform-tools и build-tools
+        yes | android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=android-sdk "platform-tools" "build-tools;34.0.0" "platforms;android-33"
         
-        # Проверяем установку aidl
-        echo "=== Checking aidl ==="
-        find ~/.buildozer -name "aidl" -type f 2>/dev/null || echo "aidl not found"
+        # Проверяем установку
+        echo "=== SDK Manager check ==="
+        ls -la android-sdk/cmdline-tools/latest/bin/sdkmanager || echo "sdkmanager not found"
         
-        echo "=== Build tools contents ==="
-        ls -la ~/.buildozer/android/platform/android-sdk/build-tools/34.0.0/ || echo "Build tools not found"
-
-    - name: Set up environment variables
-      run: |
-        echo "ANDROID_HOME=~/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
-        echo "ANDROID_SDK_ROOT=~/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
-        echo "PATH=~/.buildozer/android/platform/android-sdk/platform-tools:~/.buildozer/android/platform/android-sdk/build-tools/34.0.0:$PATH" >> $GITHUB_ENV
-
-    - name: Verify Android tools
-      run: |
-        echo "=== Current PATH ==="
-        echo $PATH
-        
-        echo "=== Checking Android tools ==="
-        which adb || echo "adb not found"
-        which aidl || echo "aidl not found"
-        
-        echo "=== Android SDK structure ==="
-        ls -la ~/.buildozer/android/platform/android-sdk/ || echo "Android SDK not found"
+        echo "=== Platform tools ==="
+        ls -la android-sdk/platform-tools/ || echo "Platform tools not found"
         
         echo "=== Build tools ==="
-        ls -la ~/.buildozer/android/platform/android-sdk/build-tools/34.0.0/ | grep aidl || echo "aidl not in build tools"
+        ls -la android-sdk/build-tools/34.0.0/ || echo "Build tools not found"
 
-    - name: Build APK with fixed environment
+    - name: Fix Buildozer configuration
+      run: |
+        # Создаем symlink чтобы Buildozer нашел SDK в ожидаемом месте
+        mkdir -p ~/.buildozer/android/platform/android-sdk
+        ln -sf ~/.buildozer/android/platform/android-sdk ~/.buildozer/android/platform/android-sdk
+        
+        echo "=== Fixed SDK structure ==="
+        ls -la ~/.buildozer/android/platform/
+
+    - name: Build APK with corrected paths
       run: |
         source venv/bin/activate
         
-        # Экспортируем переменные
+        # Устанавливаем правильные переменные окружения
         export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
         export ANDROID_SDK_ROOT=~/.buildozer/android/platform/android-sdk
-        export PATH=~/.buildozer/android/platform/android-sdk/platform-tools:~/.buildozer/android/platform/android-sdk/build-tools/34.0.0:$PATH
+        export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/build-tools/34.0.0:$PATH
         
-        echo "=== Final tool check ==="
-        which aidl || echo "WARNING: aidl still not found in PATH"
+        echo "=== PATH ==="
+        echo $PATH
         
-        # Принудительно указываем путь к aidl если не найден
-        AIDL_PATH=$(find ~/.buildozer -name "aidl" -type f 2>/dev/null | head -1)
-        if [ -n "$AIDL_PATH" ]; then
-          echo "Found aidl at: $AIDL_PATH"
-          ln -sf "$AIDL_PATH" /usr/local/bin/aidl 2>/dev/null || true
-        fi
+        echo "=== SDK Manager check ==="
+        which sdkmanager || echo "sdkmanager not in PATH"
         
         echo "=== Starting build ==="
         timeout 1800 buildozer -v android debug 2>&1 | tee full_build.log
@@ -143,7 +129,7 @@ jobs:
         fi
         
         echo "=== Error analysis ==="
-        grep -i "error\|fail\|exception\|aidl" full_build.log | head -20 || echo "No obvious errors found"
+        grep -i "error\|fail\|exception\|sdkmanager" full_build.log | head -20 || echo "No obvious errors found"
         
         echo "=== APK search ==="
         find . -name "*.apk" -type f 2>/dev/null || echo "No APK files found"
@@ -167,12 +153,10 @@ jobs:
           ls -la artifacts/
         else
           echo "No APK files found"
-          # Создаем подробный отчет о том, что есть в директориях
-          echo "=== Directory structure analysis ===" > artifacts/debug.txt
-          echo "bin directory:" >> artifacts/debug.txt
-          ls -la bin/ 2>/dev/null || echo "bin/ not found" >> artifacts/debug.txt
-          echo ".buildozer android apps:" >> artifacts/debug.txt
-          find .buildozer -name "*.apk" -type f 2>/dev/null >> artifacts/debug.txt
+          # Создаем debug информацию
+          echo "Build completed but no APK found" > artifacts/debug.txt
+          echo "=== Buildozer directories ===" >> artifacts/debug.txt
+          find .buildozer -name "*" -type d | head -10 >> artifacts/debug.txt
         fi
 
     - name: Upload APK artifact
