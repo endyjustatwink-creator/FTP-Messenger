@@ -50,16 +50,21 @@ jobs:
         export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
         export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
         
-        # Удаляем старые логи и кэш
-        rm -f full_build.log
-        buildozer android clean || true
+        # Полная очистка перед сборкой
+        buildozer android clean 2>/dev/null || true
+        rm -rf .buildozer/android/platform/build-*
+        rm -rf bin/
         
         # Сборка с подробным логированием
         buildozer -v android debug 2>&1 | tee full_build.log
         
+        # Проверяем результат
         if [ $? -eq 0 ]; then
           echo "Build successful!"
-          ls -la bin/
+          echo "=== Bin directory contents ==="
+          ls -la bin/ || echo "bin directory not found"
+          echo "=== All APK files ==="
+          find . -name "*.apk" -type f
         else
           echo "Build failed! Full log:"
           cat full_build.log
@@ -75,15 +80,35 @@ jobs:
         cat full_build.log || echo "No log file found"
         echo "=== END LOG ==="
 
+    - name: Find and prepare APK
+      run: |
+        echo "=== Searching for APK files ==="
+        find . -name "*.apk" -type f
+        
+        # Создаем artifacts directory
+        mkdir -p artifacts
+        
+        # Копируем все найденные APK файлы
+        if find . -name "*.apk" -type f | grep -q .; then
+          echo "APK files found:"
+          find . -name "*.apk" -type f -exec cp {} artifacts/ \;
+          ls -la artifacts/
+        else
+          echo "No APK files found anywhere!"
+          echo "=== Buildozer directories ==="
+          find .buildozer -name "*.apk" -type f 2>/dev/null || echo "No APK in .buildozer"
+          exit 1
+        fi
+
     - name: Upload APK artifact
       if: success()
       uses: actions/upload-artifact@v4
       with:
         name: android-apk
-        path: bin/*.apk
+        path: artifacts/*.apk
 
     - name: Upload build log
-      if: failure()
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: build-log
