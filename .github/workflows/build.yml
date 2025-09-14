@@ -15,15 +15,6 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Debug repository structure
-      run: |
-        echo "=== Repository Structure ==="
-        ls -la
-        echo "=== buildozer.spec ==="
-        cat buildozer.spec || echo "No buildozer.spec"
-        echo "=== main.py ==="
-        [ -f "main.py" ] && head -5 main.py || echo "main.py not found"
-
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
@@ -48,34 +39,14 @@ jobs:
           libffi-dev \
           libssl-dev \
           python3-dev \
-          build-essential \
-          wget
+          build-essential
 
-    - name: Create virtual environment
+    - name: Install Buildozer
       run: |
-        python3 -m venv venv
-        source venv/bin/activate
-
-    - name: Install Buildozer step by step
-      run: |
-        source venv/bin/activate
-        echo "=== Installing pip ==="
         pip install --upgrade pip
-        
-        echo "=== Installing setuptools ==="
-        pip install setuptools==65.5.0
-        
-        echo "=== Installing wheel ==="
-        pip install wheel
-        
-        echo "=== Installing Cython ==="
-        pip install cython==0.29.19
-        
-        echo "=== Installing buildozer ==="
         pip install buildozer
-        
-        echo "=== Installing kivy ==="
-        pip install kivy==2.3.0
+        pip install cython==0.29.19
+        pip install kivy
 
     - name: Pre-accept Android licenses
       run: |
@@ -84,50 +55,47 @@ jobs:
         echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> ~/.android/android-sdk-license
         echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> ~/.android/android-sdk-license
 
-    - name: Run Buildozer with step-by-step debugging
+    - name: Run Buildozer with detailed logging
       run: |
-        source venv/bin/activate
+        # Создаем лог-файл вручную чтобы он всегда был
+        echo "=== BUILD STARTED AT: $(date) ===" > full_build.log
         
-        echo "=== Step 1: Buildozer version ==="
-        buildozer --version || echo "Buildozer not found"
+        # Запускаем buildozer с подробным логированием
+        set -x  # Включаем отладку
+        buildozer -v android debug 2>&1 | tee -a full_build.log
+        BUILD_EXIT_CODE=${PIPESTATUS[0]}
+        set +x  # Выключаем отладку
         
-        echo "=== Step 2: Check configuration ==="
-        buildozer android checkconfig || echo "Config check failed"
-        
-        echo "=== Step 3: Clean previous builds ==="
-        buildozer android clean 2>/dev/null || echo "Clean failed"
-        
-        echo "=== Step 4: Starting build process ==="
-        # Запускаем buildozer с перенаправлением вывода в файл и на экран
-        {
-          echo "=== BUILD STARTED AT: $(date) ==="
-          buildozer -v android debug
-          echo "=== BUILD FINISHED WITH EXIT CODE: $? ==="
-        } 2>&1 | tee full_build.log
-        
-        # Сохраняем код возврата
-        echo "BUILD_EXIT_CODE=${PIPESTATUS[0]}" >> $GITHUB_ENV
+        echo "=== BUILD FINISHED WITH EXIT CODE: $BUILD_EXIT_CODE ===" >> full_build.log
+        echo "BUILD_EXIT_CODE=$BUILD_EXIT_CODE" >> $GITHUB_ENV
 
-    - name: Check build results
+    - name: Analyze build results
       run: |
-        echo "=== Build exit code: $BUILD_EXIT_CODE ==="
+        echo "Build exit code: $BUILD_EXIT_CODE"
         
         if [ -f "full_build.log" ]; then
-          echo "=== Last 20 lines of log ==="
-          tail -20 full_build.log || echo "Cannot read log file"
+          echo "=== Last 50 lines of log ==="
+          tail -50 full_build.log
           
-          echo "=== Error summary ==="
-          grep -i "error\|fail\|exception" full_build.log | head -10 || echo "No errors found"
+          echo "=== Error analysis ==="
+          grep -i "error\|fail\|exception" full_build.log | head -20 || echo "No errors found"
+          
+          echo "=== Warning analysis ==="
+          grep -i "warn" full_build.log | head -10 || echo "No warnings found"
         else
-          echo "=== No log file found ==="
-          echo "Buildozer probably failed before creating log"
+          echo "No log file found!"
         fi
-        
-        echo "=== APK search ==="
+
+    - name: Check for APK files
+      run: |
+        echo "=== Searching for APK files ==="
         find . -name "*.apk" -type f 2>/dev/null || echo "No APK files found"
         
-        echo "=== Buildozer directories ==="
-        ls -la .buildozer/ 2>/dev/null || echo "No .buildozer directory"
+        echo "=== Checking bin directory ==="
+        ls -la bin/ 2>/dev/null || echo "bin directory not found"
+        
+        echo "=== Checking .buildozer directory ==="
+        find .buildozer -name "*.apk" -type f 2>/dev/null || echo "No APK in .buildozer"
 
     - name: Upload build log
       if: always()
@@ -136,27 +104,25 @@ jobs:
         name: build-log
         path: full_build.log
 
-    - name: Create debug artifact
-      if: always()
+    - name: Create debug info
+      if: failure()
       run: |
         mkdir -p artifacts
-        echo "Build Exit Code: $BUILD_EXIT_CODE" > artifacts/debug-info.txt
-        echo "=== Directory structure ===" >> artifacts/debug-info.txt
-        ls -la >> artifacts/debug-info.txt
-        echo "=== Python version ===" >> artifacts/debug-info.txt
-        python3 --version >> artifacts/debug-info.txt
+        echo "Build failed with exit code: $BUILD_EXIT_CODE" > artifacts/debug.txt
+        echo "=== Directory structure ===" >> artifacts/debug.txt
+        ls -la >> artifacts/debug.txt
         
         if [ -f "full_build.log" ]; then
-          echo "=== Last 10 lines of log ===" >> artifacts/debug-info.txt
-          tail -10 full_build.log >> artifacts/debug-info.txt
+          echo "=== Last 30 lines of build log ===" >> artifacts/debug.txt
+          tail -30 full_build.log >> artifacts/debug.txt
         fi
 
     - name: Upload debug info
-      if: always()
+      if: failure()
       uses: actions/upload-artifact@v4
       with:
         name: debug-info
-        path: artifacts/debug-info.txt
+        path: artifacts/debug.txt
 
     - name: Upload APK if exists
       if: success()
