@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
     - name: Checkout repository
@@ -30,7 +30,8 @@ jobs:
           openjdk-17-jdk \
           python3-pip \
           python3-dev \
-          build-essential
+          build-essential \
+          wget
 
     - name: Install Buildozer
       run: |
@@ -39,96 +40,104 @@ jobs:
         pip install cython==0.29.19
         pip install kivy
 
-    - name: Pre-accept Android licenses
+    - name: Install Android SDK and Build Tools manually
       run: |
+        # Создаем директории
         mkdir -p ~/.android
+        mkdir -p ~/.buildozer/android/platform
+        
+        # Принимаем лицензии
         echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > ~/.android/android-sdk-license
         echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> ~/.android/android-sdk-license
         echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> ~/.android/android-sdk-license
-
-    - name: Clean previous builds
-      run: |
-        buildozer android clean 2>/dev/null || true
-        rm -rf .buildozer/android/app/build
-
-    - name: Build APK with forced completion
-      run: |
-        # Запускаем сборку в фоновом режиме
-        buildozer -v android debug 2>&1 | tee full_build.log &
-        BUILD_PID=$!
         
-        # Ждем 10 минут для основной сборки
-        sleep 600
+        # Скачиваем Command Line Tools
+        cd ~/.buildozer/android/platform
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip
+        unzip -q commandlinetools-linux-8512546_latest.zip
+        rm commandlinetools-linux-8512546_latest.zip
         
-        # Если процесс еще работает, пытаемся завершить его и создать APK
-        if kill -0 $BUILD_PID 2>/dev/null; then
-          echo "Build is taking too long, attempting to complete manually..."
-          kill $BUILD_PID 2>/dev/null || true
-          
-          # Пытаемся запустить финальную стадию сборки
-          timeout 300 buildozer android update 2>&1 | tee -a full_build.log || echo "Update failed"
-        else
-          wait $BUILD_PID
+        # Создаем правильную структуру директорий
+        mkdir -p android-sdk/cmdline-tools
+        mv cmdline-tools android-sdk/cmdline-tools/latest
+        
+        # Устанавливаем platform-tools и build-tools (включая aidl)
+        yes | android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=android-sdk \
+          "platform-tools" \
+          "build-tools;34.0.0" \
+          "platforms;android-33" \
+          "ndk;23.1.7779620"
+        
+        # Проверяем установку aidl
+        echo "=== Checking aidl ==="
+        find android-sdk -name "aidl" -type f 2>/dev/null || echo "aidl not found"
+        
+        # Создаем симлинк для Buildozer
+        ln -sf ~/.buildozer/android/platform/android-sdk ~/.buildozer/android/platform/android-sdk
+
+    - name: Set up environment variables
+      run: |
+        echo "ANDROID_HOME=~/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
+        echo "ANDROID_SDK_ROOT=~/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
+        echo "PATH=~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin:~/.buildozer/android/platform/android-sdk/platform-tools:~/.buildozer/android/platform/android-sdk/build-tools/34.0.0:$PATH" >> $GITHUB_ENV
+
+    - name: Verify Android tools installation
+      run: |
+        echo "=== Current PATH ==="
+        echo $PATH
+        
+        echo "=== Checking Android tools ==="
+        which adb || echo "adb not found"
+        which aidl || echo "aidl not found"
+        which sdkmanager || echo "sdkmanager not found"
+        
+        echo "=== Android SDK structure ==="
+        ls -la ~/.buildozer/android/platform/android-sdk/ || echo "Android SDK not found"
+        
+        echo "=== Build tools contents ==="
+        ls -la ~/.buildozer/android/platform/android-sdk/build-tools/34.0.0/ | grep aidl || echo "aidl not in build tools"
+
+    - name: Build APK
+      run: |
+        # Экспортируем переменные
+        export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
+        export ANDROID_SDK_ROOT=~/.buildozer/android/platform/android-sdk
+        export PATH=~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin:~/.buildozer/android/platform/android-sdk/platform-tools:~/.buildozer/android/platform/android-sdk/build-tools/34.0.0:$PATH
+        
+        echo "=== Final tool check ==="
+        which aidl || echo "WARNING: aidl still not found in PATH"
+        
+        # Принудительно добавляем aidl в PATH если не найден
+        AIDL_PATH=$(find ~/.buildozer -name "aidl" -type f 2>/dev/null | head -1)
+        if [ -n "$AIDL_PATH" ]; then
+          echo "Found aidl at: $AIDL_PATH"
+          export PATH=$(dirname $AIDL_PATH):$PATH
+          which aidl || echo "Still cannot find aidl"
         fi
         
-        echo "BUILD_EXIT_CODE=$?" >> $GITHUB_ENV
+        echo "=== Starting build ==="
+        buildozer -v android debug 2>&1 | tee full_build.log
+        echo "BUILD_EXIT_CODE=${PIPESTATUS[0]}" >> $GITHUB_ENV
 
-    - name: Force APK creation
+    - name: Analyze build results
       run: |
-        echo "=== Attempting to force APK creation ==="
+        echo "Build exit code: $BUILD_EXIT_CODE"
         
-        # Пытаемся найти и собрать APK вручную
-        if [ -d ".buildozer/android/app/build" ]; then
-          echo "Found build directory, attempting to package APK..."
+        if [ -f "full_build.log" ]; then
+          echo "=== Last 30 lines of log ==="
+          tail -30 full_build.log
           
-          # Переходим в директорию сборки
-          cd .buildozer/android/app
-          
-          # Пытаемся собрать APK с помощью gradle
-          ./gradlew assembleDebug 2>&1 | tee -a ../../../full_build.log || echo "Gradle build failed"
-          
-          # Ищем APK
-          find . -name "*.apk" -type f 2>/dev/null | head -5
-          
-          cd ../../..
+          echo "=== Error analysis ==="
+          grep -i "error\|fail\|exception\|aidl" full_build.log | head -20 || echo "No obvious errors found"
         fi
 
-    - name: Comprehensive APK search
+    - name: Search for APK files
       run: |
-        echo "=== Comprehensive APK search ==="
+        echo "=== APK search ==="
+        find . -name "*.apk" -type f 2>/dev/null || echo "No APK files found"
         
-        # Ищем во всех возможных местах
-        SEARCH_PATHS=(
-          "."
-          "bin"
-          ".buildozer"
-          ".buildozer/android/app"
-          ".buildozer/android/app/build"
-          ".buildozer/android/app/build/outputs/apk"
-          "~/.buildozer"
-          "/tmp"
-        )
-        
-        for path in "${SEARCH_PATHS[@]}"; do
-          echo "Searching in $path:"
-          find "$path" -name "*.apk" -type f 2>/dev/null | head -3 || echo "  No APK found"
-        done
-
-    - name: Create dummy APK if none found
-      run: |
-        echo "=== Creating bin directory ==="
-        mkdir -p bin
-        
-        if ! find . -name "*.apk" -type f 2>/dev/null | grep -q .; then
-          echo "No APK found anywhere. Creating dummy file for debugging..."
-          echo "APK was not generated during build process" > bin/build-error.txt
-          echo "Check full_build.log for details" >> bin/build-error.txt
-        else
-          # Копируем найденные APK в bin/
-          find . -name "*.apk" -type f -exec cp {} bin/ \;
-          echo "APK files copied to bin/:"
-          ls -la bin/
-        fi
+        echo "=== Buildozer directories ==="
+        find .buildozer -name "*.apk" -type f 2>/dev/null || echo "No APK in .buildozer"
 
     - name: Upload build log
       if: always()
@@ -137,29 +146,41 @@ jobs:
         name: build-log
         path: full_build.log
 
+    - name: Upload APK if exists
+      if: success()
+      run: |
+        mkdir -p artifacts
+        APK_FILES=$(find . -name "*.apk" -type f 2>/dev/null)
+        
+        if [ -n "$APK_FILES" ]; then
+          echo "Found APK files: $APK_FILES"
+          cp $APK_FILES artifacts/
+          ls -la artifacts/
+        else
+          echo "No APK files found"
+          exit 1
+        fi
+
     - name: Upload APK artifact
-      if: always()
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: android-apk
-        path: bin/*
+        path: artifacts/*.apk
 
-    - name: Create detailed debug info
+    - name: Create debug info on failure
       if: failure()
       run: |
         mkdir -p artifacts
-        echo "Build exit code: $BUILD_EXIT_CODE" > artifacts/debug-details.txt
-        echo "=== Buildozer directory structure ===" >> artifacts/debug-details.txt
-        find .buildozer -type d 2>/dev/null | head -20 >> artifacts/debug-details.txt
-        
-        if [ -f "full_build.log" ]; then
-          echo "=== Last 50 lines of build log ===" >> artifacts/debug-details.txt
-          tail -50 full_build.log >> artifacts/debug-details.txt
-        fi
+        echo "Build failed with exit code: $BUILD_EXIT_CODE" > artifacts/debug.txt
+        echo "=== Android tools check ===" >> artifacts/debug.txt
+        which aidl 2>&1 >> artifacts/debug.txt || echo "aidl not found" >> artifacts/debug.txt
+        echo "=== PATH ===" >> artifacts/debug.txt
+        echo $PATH >> artifacts/debug.txt
 
-    - name: Upload debug details
+    - name: Upload debug info
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: debug-details
-        path: artifacts/debug-details.txt
+        name: debug-info
+        path: artifacts/debug.txt
