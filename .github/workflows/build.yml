@@ -15,12 +15,12 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Set up Python
+    - name: Set up Python with dev headers
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
 
-    - name: Install system dependencies
+    - name: Install system dependencies with Python headers
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -41,7 +41,9 @@ jobs:
           python3-venv \
           python3-dev \
           build-essential \
-          wget
+          wget \
+          python3.9-dev \
+          libpython3.9-dev
 
     - name: Create and activate virtual environment
       run: |
@@ -58,65 +60,31 @@ jobs:
         pip install buildozer
         pip install kivy==2.3.0
 
-    - name: Setup Android SDK correctly
+    - name: Verify Python headers
       run: |
-        # Создаем директории
+        echo "=== Checking Python headers ==="
+        python3 -c "import sysconfig; print(sysconfig.get_config_var('INCLUDEPY'))"
+        find /usr -name "Python.h" 2>/dev/null | head -5 || echo "Python.h not found"
+
+    - name: Pre-accept Android licenses
+      run: |
         mkdir -p ~/.android
-        mkdir -p ~/.buildozer/android/platform
-        
-        # Принимаем лицензии
         echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > ~/.android/android-sdk-license
         echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> ~/.android/android-sdk-license
         echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> ~/.android/android-sdk-license
-        
-        # Скачиваем Command Line Tools в правильную директорию
-        cd ~/.buildozer/android/platform
-        wget -q https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip
-        unzip -q commandlinetools-linux-8512546_latest.zip
-        rm commandlinetools-linux-8512546_latest.zip
-        
-        # Создаем правильную структуру директорий для Android SDK
-        mkdir -p android-sdk/cmdline-tools
-        mv cmdline-tools android-sdk/cmdline-tools/latest
-        
-        # Устанавливаем platform-tools и build-tools
-        yes | android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=android-sdk "platform-tools" "build-tools;34.0.0" "platforms;android-33"
-        
-        # Проверяем установку
-        echo "=== SDK Manager check ==="
-        ls -la android-sdk/cmdline-tools/latest/bin/sdkmanager || echo "sdkmanager not found"
-        
-        echo "=== Platform tools ==="
-        ls -la android-sdk/platform-tools/ || echo "Platform tools not found"
-        
-        echo "=== Build tools ==="
-        ls -la android-sdk/build-tools/34.0.0/ || echo "Build tools not found"
 
-    - name: Fix Buildozer configuration
-      run: |
-        # Создаем symlink чтобы Buildozer нашел SDK в ожидаемом месте
-        mkdir -p ~/.buildozer/android/platform/android-sdk
-        ln -sf ~/.buildozer/android/platform/android-sdk ~/.buildozer/android/platform/android-sdk
-        
-        echo "=== Fixed SDK structure ==="
-        ls -la ~/.buildozer/android/platform/
-
-    - name: Build APK with corrected paths
+    - name: Build APK with fixed environment
       run: |
         source venv/bin/activate
         
-        # Устанавливаем правильные переменные окружения
-        export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
-        export ANDROID_SDK_ROOT=~/.buildozer/android/platform/android-sdk
-        export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/build-tools/34.0.0:$PATH
+        # Экспортируем пути к Python headers
+        export C_INCLUDE_PATH=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('INCLUDEPY'))"):$C_INCLUDE_PATH
+        export CPLUS_INCLUDE_PATH=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('INCLUDEPY'))"):$CPLUS_INCLUDE_PATH
         
-        echo "=== PATH ==="
-        echo $PATH
+        echo "=== Python include path ==="
+        python3 -c "import sysconfig; print(sysconfig.get_config_var('INCLUDEPY'))"
         
-        echo "=== SDK Manager check ==="
-        which sdkmanager || echo "sdkmanager not in PATH"
-        
-        echo "=== Starting build ==="
+        echo "=== Starting build process ==="
         timeout 1800 buildozer -v android debug 2>&1 | tee full_build.log
 
     - name: Analyze build results
@@ -129,7 +97,7 @@ jobs:
         fi
         
         echo "=== Error analysis ==="
-        grep -i "error\|fail\|exception\|sdkmanager" full_build.log | head -20 || echo "No obvious errors found"
+        grep -i "error\|fail\|exception\|Python.h" full_build.log | head -20 || echo "No obvious errors found"
         
         echo "=== APK search ==="
         find . -name "*.apk" -type f 2>/dev/null || echo "No APK files found"
@@ -154,9 +122,8 @@ jobs:
         else
           echo "No APK files found"
           # Создаем debug информацию
-          echo "Build completed but no APK found" > artifacts/debug.txt
-          echo "=== Buildozer directories ===" >> artifacts/debug.txt
-          find .buildozer -name "*" -type d | head -10 >> artifacts/debug.txt
+          echo "Build log analysis:" > artifacts/debug.txt
+          tail -50 full_build.log >> artifacts/debug.txt
         fi
 
     - name: Upload APK artifact
