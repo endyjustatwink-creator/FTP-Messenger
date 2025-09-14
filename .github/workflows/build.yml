@@ -9,18 +9,27 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Set up Python with dev headers
+    - name: Debug repository structure
+      run: |
+        echo "=== Repository Structure ==="
+        ls -la
+        echo "=== buildozer.spec ==="
+        cat buildozer.spec || echo "No buildozer.spec"
+        echo "=== main.py ==="
+        [ -f "main.py" ] && head -5 main.py || echo "main.py not found"
+
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
 
-    - name: Install system dependencies with Python headers
+    - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -38,33 +47,35 @@ jobs:
           libsqlite3-dev \
           libffi-dev \
           libssl-dev \
-          python3-venv \
           python3-dev \
           build-essential \
-          wget \
-          python3.9-dev \
-          libpython3.9-dev
+          wget
 
-    - name: Create and activate virtual environment
+    - name: Create virtual environment
       run: |
         python3 -m venv venv
         source venv/bin/activate
 
-    - name: Install Buildozer and dependencies
+    - name: Install Buildozer step by step
       run: |
         source venv/bin/activate
+        echo "=== Installing pip ==="
         pip install --upgrade pip
-        pip install wheel
+        
+        echo "=== Installing setuptools ==="
         pip install setuptools==65.5.0
+        
+        echo "=== Installing wheel ==="
+        pip install wheel
+        
+        echo "=== Installing Cython ==="
         pip install cython==0.29.19
+        
+        echo "=== Installing buildozer ==="
         pip install buildozer
+        
+        echo "=== Installing kivy ==="
         pip install kivy==2.3.0
-
-    - name: Verify Python headers
-      run: |
-        echo "=== Checking Python headers ==="
-        python3 -c "import sysconfig; print(sysconfig.get_config_var('INCLUDEPY'))"
-        find /usr -name "Python.h" 2>/dev/null | head -5 || echo "Python.h not found"
 
     - name: Pre-accept Android licenses
       run: |
@@ -73,34 +84,50 @@ jobs:
         echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> ~/.android/android-sdk-license
         echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> ~/.android/android-sdk-license
 
-    - name: Build APK with fixed environment
+    - name: Run Buildozer with step-by-step debugging
       run: |
         source venv/bin/activate
         
-        # Экспортируем пути к Python headers
-        export C_INCLUDE_PATH=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('INCLUDEPY'))"):$C_INCLUDE_PATH
-        export CPLUS_INCLUDE_PATH=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('INCLUDEPY'))"):$CPLUS_INCLUDE_PATH
+        echo "=== Step 1: Buildozer version ==="
+        buildozer --version || echo "Buildozer not found"
         
-        echo "=== Python include path ==="
-        python3 -c "import sysconfig; print(sysconfig.get_config_var('INCLUDEPY'))"
+        echo "=== Step 2: Check configuration ==="
+        buildozer android checkconfig || echo "Config check failed"
         
-        echo "=== Starting build process ==="
-        timeout 1800 buildozer -v android debug 2>&1 | tee full_build.log
+        echo "=== Step 3: Clean previous builds ==="
+        buildozer android clean 2>/dev/null || echo "Clean failed"
+        
+        echo "=== Step 4: Starting build process ==="
+        # Запускаем buildozer с перенаправлением вывода в файл и на экран
+        {
+          echo "=== BUILD STARTED AT: $(date) ==="
+          buildozer -v android debug
+          echo "=== BUILD FINISHED WITH EXIT CODE: $? ==="
+        } 2>&1 | tee full_build.log
+        
+        # Сохраняем код возврата
+        echo "BUILD_EXIT_CODE=${PIPESTATUS[0]}" >> $GITHUB_ENV
 
-    - name: Analyze build results
+    - name: Check build results
       run: |
-        echo "=== Build status ==="
-        if [ ${PIPESTATUS[0]} -eq 0 ]; then
-          echo "Build completed successfully!"
-        else
-          echo "Build failed or timed out"
-        fi
+        echo "=== Build exit code: $BUILD_EXIT_CODE ==="
         
-        echo "=== Error analysis ==="
-        grep -i "error\|fail\|exception\|Python.h" full_build.log | head -20 || echo "No obvious errors found"
+        if [ -f "full_build.log" ]; then
+          echo "=== Last 20 lines of log ==="
+          tail -20 full_build.log || echo "Cannot read log file"
+          
+          echo "=== Error summary ==="
+          grep -i "error\|fail\|exception" full_build.log | head -10 || echo "No errors found"
+        else
+          echo "=== No log file found ==="
+          echo "Buildozer probably failed before creating log"
+        fi
         
         echo "=== APK search ==="
         find . -name "*.apk" -type f 2>/dev/null || echo "No APK files found"
+        
+        echo "=== Buildozer directories ==="
+        ls -la .buildozer/ 2>/dev/null || echo "No .buildozer directory"
 
     - name: Upload build log
       if: always()
@@ -109,8 +136,30 @@ jobs:
         name: build-log
         path: full_build.log
 
-    - name: Upload APK if exists
+    - name: Create debug artifact
       if: always()
+      run: |
+        mkdir -p artifacts
+        echo "Build Exit Code: $BUILD_EXIT_CODE" > artifacts/debug-info.txt
+        echo "=== Directory structure ===" >> artifacts/debug-info.txt
+        ls -la >> artifacts/debug-info.txt
+        echo "=== Python version ===" >> artifacts/debug-info.txt
+        python3 --version >> artifacts/debug-info.txt
+        
+        if [ -f "full_build.log" ]; then
+          echo "=== Last 10 lines of log ===" >> artifacts/debug-info.txt
+          tail -10 full_build.log >> artifacts/debug-info.txt
+        fi
+
+    - name: Upload debug info
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: debug-info
+        path: artifacts/debug-info.txt
+
+    - name: Upload APK if exists
+      if: success()
       run: |
         mkdir -p artifacts
         APK_FILES=$(find . -name "*.apk" -type f 2>/dev/null)
@@ -121,9 +170,7 @@ jobs:
           ls -la artifacts/
         else
           echo "No APK files found"
-          # Создаем debug информацию
-          echo "Build log analysis:" > artifacts/debug.txt
-          tail -50 full_build.log >> artifacts/debug.txt
+          exit 1
         fi
 
     - name: Upload APK artifact
@@ -132,10 +179,3 @@ jobs:
       with:
         name: android-apk
         path: artifacts/*.apk
-
-    - name: Upload debug info
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: debug-info
-        path: artifacts/debug.txt
