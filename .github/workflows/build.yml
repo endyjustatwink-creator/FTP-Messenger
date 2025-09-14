@@ -34,7 +34,6 @@ jobs:
           pkg-config \
           zlib1g-dev \
           libncurses5-dev \
-          libtinfo5 \
           libsqlite3-dev \
           libffi-dev \
           libssl-dev
@@ -51,6 +50,11 @@ jobs:
         export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
         export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
         
+        # Удаляем старые логи и кэш
+        rm -f full_build.log
+        buildozer android clean || true
+        
+        # Сборка с подробным логированием
         buildozer -v android debug 2>&1 | tee full_build.log
         
         if [ $? -eq 0 ]; then
@@ -59,11 +63,28 @@ jobs:
         else
           echo "Build failed! Full log:"
           cat full_build.log
+          echo "=== Error summary ==="
+          grep -i "error\|fail\|exception" full_build.log | head -20
           exit 1
         fi
 
+    - name: Show build log
+      if: always()
+      run: |
+        echo "=== FULL BUILD LOG ==="
+        cat full_build.log || echo "No log file found"
+        echo "=== END LOG ==="
+
     - name: Upload APK artifact
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: android-apk
         path: bin/*.apk
+
+    - name: Upload build log
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log
+        path: full_build.log
