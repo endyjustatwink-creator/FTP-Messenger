@@ -19,7 +19,7 @@ jobs:
       with:
         python-version: '3.9'
 
-    - name: Install system dependencies
+    - name: Install Android SDK commandline tools and aidl
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -40,6 +40,20 @@ jobs:
           python3-venv \
           python3-dev \
           build-essential
+        
+        # Устанавливаем Android SDK Commandline Tools
+        mkdir -p ~/android-sdk
+        cd ~/android-sdk
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip
+        unzip -q commandlinetools-linux-8512546_latest.zip
+        rm commandlinetools-linux-8512546_latest.zip
+        
+        # Устанавливаем Android SDK и platform-tools
+        yes | ~/android-sdk/cmdline-tools/bin/sdkmanager --sdk_root=~/android-sdk "platform-tools" "build-tools;34.0.0" "platforms;android-33"
+        
+        # Добавляем в PATH
+        echo "~/android-sdk/platform-tools" >> $GITHUB_PATH
+        echo "~/android-sdk/build-tools/34.0.0" >> $GITHUB_PATH
 
     - name: Create and activate virtual environment
       run: |
@@ -56,35 +70,69 @@ jobs:
         pip install buildozer
         pip install kivy==2.3.0
 
-    - name: Fix buildozer.spec requirements
+    - name: Pre-accept Android licenses
       run: |
-        # Обновляем requirements в buildozer.spec
-        sed -i 's/^requirements = .*/requirements = python3,kivy==2.3.0,openssl,requests,plyer/' buildozer.spec
-        echo "Updated requirements in buildozer.spec"
+        mkdir -p ~/.android
+        touch ~/.android/repositories.cfg
+        
+        # Принимаем лицензии автоматически
+        echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > ~/.android/android-sdk-license
+        echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> ~/.android/android-sdk-license
+        echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> ~/.android/android-sdk-license
 
-    - name: Build APK with fixed environment
+    - name: Check aidl availability
+      run: |
+        echo "=== Checking aidl ==="
+        which aidl || echo "aidl not found in PATH"
+        find ~ -name "aidl" -type f 2>/dev/null | head -5 || echo "aidl not found anywhere"
+        
+        echo "=== Android SDK tools ==="
+        ls -la ~/android-sdk/ || echo "Android SDK not found"
+        ls -la ~/android-sdk/build-tools/ || echo "Build tools not found"
+        ls -la ~/android-sdk/build-tools/*/aidl 2>/dev/null || echo "aidl not found in build tools"
+
+    - name: Build APK with Android SDK fix
       run: |
         source venv/bin/activate
-        export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
-        export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
         
-        echo "=== Buildozer version ==="
-        buildozer --version
+        # Экспортируем правильные пути к Android SDK
+        export ANDROID_SDK_ROOT=~/android-sdk
+        export ANDROID_HOME=~/android-sdk
+        export PATH=~/android-sdk/platform-tools:~/android-sdk/build-tools/34.0.0:$PATH
+        
+        echo "=== Current PATH ==="
+        echo $PATH
+        echo "=== aidl check ==="
+        which aidl || echo "aidl still not found"
         
         echo "=== Starting build process ==="
-        buildozer -v android debug 2>&1 | tee full_build.log
+        timeout 2400 buildozer -v android debug 2>&1 | tee full_build.log
+        
+        # Проверяем результат
+        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+          echo "Build completed successfully!"
+        elif [ ${PIPESTATUS[0]} -eq 124 ]; then
+          echo "Build timed out after 40 minutes"
+        else
+          echo "Build failed with error code ${PIPESTATUS[0]}"
+        fi
 
     - name: Analyze build results
       run: |
-        echo "=== Build status ==="
-        if [ ${PIPESTATUS[0]} -eq 0 ]; then
-          echo "Build completed successfully!"
-        else
-          echo "Build failed!"
-        fi
+        echo "=== Build status analysis ==="
         
-        echo "=== Error analysis ==="
-        grep -i "error\|fail\|exception" full_build.log | head -20 || echo "No obvious errors found"
+        if [ -f full_build.log ]; then
+          echo "Last 30 lines of log:"
+          tail -30 full_build.log
+          
+          echo "=== aidl-related errors ==="
+          grep -i "aidl\|AIDL" full_build.log || echo "No aidl issues found"
+          
+          echo "=== General errors ==="
+          grep -i "error\|fail\|exception" full_build.log | head -20 || echo "No obvious errors found"
+        else
+          echo "No build log found!"
+        fi
         
         echo "=== APK search ==="
         find . -name "*.apk" -type f 2>/dev/null || echo "No APK files found"
@@ -96,7 +144,7 @@ jobs:
         name: build-log
         path: full_build.log
 
-    - name: Upload APK if exists
+    - name: Upload any found APK
       if: always()
       run: |
         mkdir -p artifacts
@@ -108,7 +156,6 @@ jobs:
           ls -la artifacts/
         else
           echo "No APK files found"
-          # Создаем dummy файл чтобы избежать ошибки
           touch artifacts/no-apk.txt
         fi
 
