@@ -9,6 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
     - name: Checkout repository
@@ -19,7 +20,7 @@ jobs:
       with:
         python-version: '3.9'
 
-    - name: Install Android SDK commandline tools and aidl
+    - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -39,28 +40,15 @@ jobs:
           libssl-dev \
           python3-venv \
           python3-dev \
-          build-essential
-        
-        # Устанавливаем Android SDK Commandline Tools
-        mkdir -p ~/android-sdk
-        cd ~/android-sdk
-        wget -q https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip
-        unzip -q commandlinetools-linux-8512546_latest.zip
-        rm commandlinetools-linux-8512546_latest.zip
-        
-        # Устанавливаем Android SDK и platform-tools
-        yes | ~/android-sdk/cmdline-tools/bin/sdkmanager --sdk_root=~/android-sdk "platform-tools" "build-tools;34.0.0" "platforms;android-33"
-        
-        # Добавляем в PATH
-        echo "~/android-sdk/platform-tools" >> $GITHUB_PATH
-        echo "~/android-sdk/build-tools/34.0.0" >> $GITHUB_PATH
+          build-essential \
+          wget
 
     - name: Create and activate virtual environment
       run: |
         python3 -m venv venv
         source venv/bin/activate
 
-    - name: Install exact versions of dependencies
+    - name: Install Buildozer and dependencies
       run: |
         source venv/bin/activate
         pip install --upgrade pip
@@ -70,69 +58,92 @@ jobs:
         pip install buildozer
         pip install kivy==2.3.0
 
-    - name: Pre-accept Android licenses
+    - name: Install Android SDK and Build Tools manually
       run: |
+        # Создаем директории для Android SDK
         mkdir -p ~/.android
-        touch ~/.android/repositories.cfg
+        mkdir -p ~/.buildozer/android/platform
         
-        # Принимаем лицензии автоматически
+        # Принимаем лицензии
         echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > ~/.android/android-sdk-license
         echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> ~/.android/android-sdk-license
         echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> ~/.android/android-sdk-license
-
-    - name: Check aidl availability
-      run: |
-        echo "=== Checking aidl ==="
-        which aidl || echo "aidl not found in PATH"
-        find ~ -name "aidl" -type f 2>/dev/null | head -5 || echo "aidl not found anywhere"
         
-        echo "=== Android SDK tools ==="
-        ls -la ~/android-sdk/ || echo "Android SDK not found"
-        ls -la ~/android-sdk/build-tools/ || echo "Build tools not found"
-        ls -la ~/android-sdk/build-tools/*/aidl 2>/dev/null || echo "aidl not found in build tools"
+        # Скачиваем и устанавливаем Android Command Line Tools
+        cd ~/.buildozer/android/platform
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip
+        unzip -q commandlinetools-linux-8512546_latest.zip
+        rm commandlinetools-linux-8512546_latest.zip
+        
+        # Устанавливаем SDK Manager
+        cd ~/.buildozer/android/platform
+        mkdir -p android-sdk/cmdline-tools
+        mv cmdline-tools android-sdk/cmdline-tools/latest
+        
+        # Устанавливаем необходимые компоненты
+        yes | android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=android-sdk "platform-tools" "build-tools;34.0.0" "platforms;android-33" "ndk;23.1.7779620"
+        
+        # Проверяем установку aidl
+        echo "=== Checking aidl ==="
+        find ~/.buildozer -name "aidl" -type f 2>/dev/null || echo "aidl not found"
+        
+        echo "=== Build tools contents ==="
+        ls -la ~/.buildozer/android/platform/android-sdk/build-tools/34.0.0/ || echo "Build tools not found"
 
-    - name: Build APK with Android SDK fix
+    - name: Set up environment variables
+      run: |
+        echo "ANDROID_HOME=~/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
+        echo "ANDROID_SDK_ROOT=~/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
+        echo "PATH=~/.buildozer/android/platform/android-sdk/platform-tools:~/.buildozer/android/platform/android-sdk/build-tools/34.0.0:$PATH" >> $GITHUB_ENV
+
+    - name: Verify Android tools
+      run: |
+        echo "=== Current PATH ==="
+        echo $PATH
+        
+        echo "=== Checking Android tools ==="
+        which adb || echo "adb not found"
+        which aidl || echo "aidl not found"
+        
+        echo "=== Android SDK structure ==="
+        ls -la ~/.buildozer/android/platform/android-sdk/ || echo "Android SDK not found"
+        
+        echo "=== Build tools ==="
+        ls -la ~/.buildozer/android/platform/android-sdk/build-tools/34.0.0/ | grep aidl || echo "aidl not in build tools"
+
+    - name: Build APK with fixed environment
       run: |
         source venv/bin/activate
         
-        # Экспортируем правильные пути к Android SDK
-        export ANDROID_SDK_ROOT=~/android-sdk
-        export ANDROID_HOME=~/android-sdk
-        export PATH=~/android-sdk/platform-tools:~/android-sdk/build-tools/34.0.0:$PATH
+        # Экспортируем переменные
+        export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
+        export ANDROID_SDK_ROOT=~/.buildozer/android/platform/android-sdk
+        export PATH=~/.buildozer/android/platform/android-sdk/platform-tools:~/.buildozer/android/platform/android-sdk/build-tools/34.0.0:$PATH
         
-        echo "=== Current PATH ==="
-        echo $PATH
-        echo "=== aidl check ==="
-        which aidl || echo "aidl still not found"
+        echo "=== Final tool check ==="
+        which aidl || echo "WARNING: aidl still not found in PATH"
         
-        echo "=== Starting build process ==="
-        timeout 2400 buildozer -v android debug 2>&1 | tee full_build.log
-        
-        # Проверяем результат
-        if [ ${PIPESTATUS[0]} -eq 0 ]; then
-          echo "Build completed successfully!"
-        elif [ ${PIPESTATUS[0]} -eq 124 ]; then
-          echo "Build timed out after 40 minutes"
-        else
-          echo "Build failed with error code ${PIPESTATUS[0]}"
+        # Принудительно указываем путь к aidl если не найден
+        AIDL_PATH=$(find ~/.buildozer -name "aidl" -type f 2>/dev/null | head -1)
+        if [ -n "$AIDL_PATH" ]; then
+          echo "Found aidl at: $AIDL_PATH"
+          ln -sf "$AIDL_PATH" /usr/local/bin/aidl 2>/dev/null || true
         fi
+        
+        echo "=== Starting build ==="
+        timeout 1800 buildozer -v android debug 2>&1 | tee full_build.log
 
     - name: Analyze build results
       run: |
-        echo "=== Build status analysis ==="
-        
-        if [ -f full_build.log ]; then
-          echo "Last 30 lines of log:"
-          tail -30 full_build.log
-          
-          echo "=== aidl-related errors ==="
-          grep -i "aidl\|AIDL" full_build.log || echo "No aidl issues found"
-          
-          echo "=== General errors ==="
-          grep -i "error\|fail\|exception" full_build.log | head -20 || echo "No obvious errors found"
+        echo "=== Build status ==="
+        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+          echo "Build completed successfully!"
         else
-          echo "No build log found!"
+          echo "Build failed or timed out"
         fi
+        
+        echo "=== Error analysis ==="
+        grep -i "error\|fail\|exception\|aidl" full_build.log | head -20 || echo "No obvious errors found"
         
         echo "=== APK search ==="
         find . -name "*.apk" -type f 2>/dev/null || echo "No APK files found"
@@ -144,7 +155,7 @@ jobs:
         name: build-log
         path: full_build.log
 
-    - name: Upload any found APK
+    - name: Upload APK if exists
       if: always()
       run: |
         mkdir -p artifacts
@@ -156,12 +167,24 @@ jobs:
           ls -la artifacts/
         else
           echo "No APK files found"
-          touch artifacts/no-apk.txt
+          # Создаем подробный отчет о том, что есть в директориях
+          echo "=== Directory structure analysis ===" > artifacts/debug.txt
+          echo "bin directory:" >> artifacts/debug.txt
+          ls -la bin/ 2>/dev/null || echo "bin/ not found" >> artifacts/debug.txt
+          echo ".buildozer android apps:" >> artifacts/debug.txt
+          find .buildozer -name "*.apk" -type f 2>/dev/null >> artifacts/debug.txt
         fi
 
     - name: Upload APK artifact
-      if: always()
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: android-apk
-        path: artifacts/*
+        path: artifacts/*.apk
+
+    - name: Upload debug info
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: debug-info
+        path: artifacts/debug.txt
