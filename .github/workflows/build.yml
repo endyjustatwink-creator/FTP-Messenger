@@ -26,6 +26,7 @@ jobs:
         title = FTP Messenger
         package.name = ftpmessenger
         package.domain = org.ftp
+        version = 1.0
         source.dir = .
         source.include_exts = py,png,jpg,kv,atlas
         requirements = python3, kivy, ftplib
