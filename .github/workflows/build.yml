@@ -7,14 +7,33 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Build APK with Buildozer
-      uses: ArtemSBulgakov/buildozer-action@v1
+    - name: Set up Python
+      uses: actions/setup-python@v4
       with:
-        buildozer_version: stable
-        requirements: python3,kivy,ftplib
-        package_name: com.ftp.messenger
-        app_name: FTP Messenger
-        orientation: portrait
+        python-version: '3.8'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev
+        
+    - name: Install Buildozer
+      run: pip install buildozer
+        
+    - name: Create buildozer.spec
+      run: |
+        echo "[app]
+        title = FTP Messenger
+        package.name = ftpmessenger
+        package.domain = org.ftp
+        source.dir = .
+        source.include_exts = py,png,jpg,kv,atlas
+        requirements = python3, kivy, ftplib
+        orientation = portrait" > buildozer.spec
+        
+    - name: Build APK
+      run: |
+        buildozer android debug
         
     - name: Upload APK
       uses: actions/upload-artifact@v4
