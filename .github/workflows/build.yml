@@ -1,186 +1,23 @@
-name: Android Build
-
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+name: Build APK
+on: [push, workflow_dispatch]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
+    - uses: actions/checkout@v4
+    
+    - name: Build APK with Buildozer
+      uses: ArtemSBulgakov/buildozer-action@v1
       with:
-        python-version: '3.9'
-
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          git \
-          zip \
-          unzip \
-          openjdk-17-jdk \
-          python3-pip \
-          python3-dev \
-          build-essential \
-          wget
-
-    - name: Install Buildozer
-      run: |
-        pip install --upgrade pip
-        pip install buildozer
-        pip install cython==0.29.19
-        pip install kivy
-
-    - name: Install Android SDK and Build Tools manually
-      run: |
-        # Создаем директории
-        mkdir -p ~/.android
-        mkdir -p ~/.buildozer/android/platform
+        buildozer_version: stable
+        requirements: python3,kivy,ftplib
+        package_name: com.ftp.messenger
+        app_name: FTP Messenger
+        orientation: portrait
         
-        # Принимаем лицензии
-        echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > ~/.android/android-sdk-license
-        echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> ~/.android/android-sdk-license
-        echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> ~/.android/android-sdk-license
-        
-        # Скачиваем Command Line Tools
-        cd ~/.buildozer/android/platform
-        wget -q https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip
-        unzip -q commandlinetools-linux-8512546_latest.zip
-        rm commandlinetools-linux-8512546_latest.zip
-        
-        # Создаем правильную структуру директорий
-        mkdir -p android-sdk/cmdline-tools
-        mv cmdline-tools android-sdk/cmdline-tools/latest
-        
-        # Устанавливаем platform-tools и build-tools (включая aidl)
-        yes | android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=android-sdk \
-          "platform-tools" \
-          "build-tools;34.0.0" \
-          "platforms;android-33" \
-          "ndk;23.1.7779620"
-        
-        # Проверяем установку aidl
-        echo "=== Checking aidl ==="
-        find android-sdk -name "aidl" -type f 2>/dev/null || echo "aidl not found"
-        
-        # Создаем симлинк для Buildozer
-        ln -sf ~/.buildozer/android/platform/android-sdk ~/.buildozer/android/platform/android-sdk
-
-    - name: Set up environment variables
-      run: |
-        echo "ANDROID_HOME=~/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
-        echo "ANDROID_SDK_ROOT=~/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
-        echo "PATH=~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin:~/.buildozer/android/platform/android-sdk/platform-tools:~/.buildozer/android/platform/android-sdk/build-tools/34.0.0:$PATH" >> $GITHUB_ENV
-
-    - name: Verify Android tools installation
-      run: |
-        echo "=== Current PATH ==="
-        echo $PATH
-        
-        echo "=== Checking Android tools ==="
-        which adb || echo "adb not found"
-        which aidl || echo "aidl not found"
-        which sdkmanager || echo "sdkmanager not found"
-        
-        echo "=== Android SDK structure ==="
-        ls -la ~/.buildozer/android/platform/android-sdk/ || echo "Android SDK not found"
-        
-        echo "=== Build tools contents ==="
-        ls -la ~/.buildozer/android/platform/android-sdk/build-tools/34.0.0/ | grep aidl || echo "aidl not in build tools"
-
-    - name: Build APK
-      run: |
-        # Экспортируем переменные
-        export ANDROID_HOME=~/.buildozer/android/platform/android-sdk
-        export ANDROID_SDK_ROOT=~/.buildozer/android/platform/android-sdk
-        export PATH=~/.buildozer/android/platform/android-sdk/cmdline-tools/latest/bin:~/.buildozer/android/platform/android-sdk/platform-tools:~/.buildozer/android/platform/android-sdk/build-tools/34.0.0:$PATH
-        
-        echo "=== Final tool check ==="
-        which aidl || echo "WARNING: aidl still not found in PATH"
-        
-        # Принудительно добавляем aidl в PATH если не найден
-        AIDL_PATH=$(find ~/.buildozer -name "aidl" -type f 2>/dev/null | head -1)
-        if [ -n "$AIDL_PATH" ]; then
-          echo "Found aidl at: $AIDL_PATH"
-          export PATH=$(dirname $AIDL_PATH):$PATH
-          which aidl || echo "Still cannot find aidl"
-        fi
-        
-        echo "=== Starting build ==="
-        buildozer -v android debug 2>&1 | tee full_build.log
-        echo "BUILD_EXIT_CODE=${PIPESTATUS[0]}" >> $GITHUB_ENV
-
-    - name: Analyze build results
-      run: |
-        echo "Build exit code: $BUILD_EXIT_CODE"
-        
-        if [ -f "full_build.log" ]; then
-          echo "=== Last 30 lines of log ==="
-          tail -30 full_build.log
-          
-          echo "=== Error analysis ==="
-          grep -i "error\|fail\|exception\|aidl" full_build.log | head -20 || echo "No obvious errors found"
-        fi
-
-    - name: Search for APK files
-      run: |
-        echo "=== APK search ==="
-        find . -name "*.apk" -type f 2>/dev/null || echo "No APK files found"
-        
-        echo "=== Buildozer directories ==="
-        find .buildozer -name "*.apk" -type f 2>/dev/null || echo "No APK in .buildozer"
-
-    - name: Upload build log
-      if: always()
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: build-log
-        path: full_build.log
-
-    - name: Upload APK if exists
-      if: success()
-      run: |
-        mkdir -p artifacts
-        APK_FILES=$(find . -name "*.apk" -type f 2>/dev/null)
-        
-        if [ -n "$APK_FILES" ]; then
-          echo "Found APK files: $APK_FILES"
-          cp $APK_FILES artifacts/
-          ls -la artifacts/
-        else
-          echo "No APK files found"
-          exit 1
-        fi
-
-    - name: Upload APK artifact
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: android-apk
-        path: artifacts/*.apk
-
-    - name: Create debug info on failure
-      if: failure()
-      run: |
-        mkdir -p artifacts
-        echo "Build failed with exit code: $BUILD_EXIT_CODE" > artifacts/debug.txt
-        echo "=== Android tools check ===" >> artifacts/debug.txt
-        which aidl 2>&1 >> artifacts/debug.txt || echo "aidl not found" >> artifacts/debug.txt
-        echo "=== PATH ===" >> artifacts/debug.txt
-        echo $PATH >> artifacts/debug.txt
-
-    - name: Upload debug info
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: debug-info
-        path: artifacts/debug.txt
+        name: FTP-Messenger-APK
+        path: bin/*.apk
